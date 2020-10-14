@@ -1,3 +1,3 @@
-# simple private python package index using cloudflare workers
+# cfpypi
 
-
+Simple private python package index using cloudflare workers.

@@ -5,35 +5,51 @@ function handle(request) {
   if (url.pathname === '/') {
     return index(request, url)
   }
-  // const credentials = get_credentials(request)
-  const credentials = {user: 'upload', password: UPLOAD_PASSWORD}
+  const credentials = get_credentials(request)
+  // const credentials = { user: DOWNLOAD_USER, password: DOWNLOAD_PASSWORD }
   if (!credentials) {
-    return new Response('invalid "Authorization" header', {
+    return new Response('invalid "Authorization" header\n', {
       status: 401,
       headers: { 'WWW-Authenticate': ' Basic realm="Access to the cfpyi site"' },
     })
   }
-  if (credentials.user === 'download') {
+  if (credentials.user === DOWNLOAD_USER) {
     if (credentials.password === DOWNLOAD_PASSWORD) {
       return download(request, url)
     }
-    return new Response('password download wrong', { status: 403 })
-  } else if (credentials.user === 'upload') {
+    return new Response('password download wrong\n', { status: 403 })
+  } else if (credentials.user === UPLOAD_USER) {
     if (credentials.password === UPLOAD_PASSWORD) {
-      return upload(request, url)
+      if (request.method === 'GET') {
+        return download(request, url)
+      } else {
+        return upload(request, url)
+      }
     }
-    return new Response('password upload wrong', { status: 403 })
+    return new Response('password upload wrong\n', { status: 403 })
   } else {
-    return new Response('username wrong', { status: 403 })
+    return new Response('username wrong\n', { status: 403 })
   }
 }
 
-async function index (request, url) {
+const index_html = `
+<h1>cpypi</h1>
+<p>
+  Private python package index using cloudflare workers
+</p>
+<p>
+  See 
+  <a href="https://github.com/samuelcolvin/cfpypi">github.com/samuelcolvin/cfpypi</a>
+  for more details.
+</p>
+`
+
+async function index(request, url) {
   const r = check_method(request, 'GET')
   if (r) {
     return r
   }
-  return new Response('cfpypi')
+  return new Response(index_html, { headers: { 'content-type': 'text/html' } })
 }
 
 async function download(request, url) {
@@ -41,8 +57,34 @@ async function download(request, url) {
   if (r) {
     return r
   }
+
   const package_name = url.pathname.substr(1)
-  return new Response(`downloaded`)
+  if (url.searchParams.get('list')) {
+    const data = { package: package_name, versions: await get_versions(package_name) }
+    return new Response(JSON.stringify(data, null, 2) + '\n', { headers: { 'content-type': 'application/json' } })
+  }
+
+  let version = get_version(url)
+  if (!version) {
+    const versions = await get_versions(package_name)
+    if (!versions.length) {
+      return new Response(`package "${package_name}" not found`, { status: 404 })
+    }
+    version = versions[0]
+  } else {
+    try {
+      const vd = parse_version(version)
+      version = vd.canonical
+    } catch (e) {
+      return new Response(e.toString(), { status: 400 })
+    }
+  }
+
+  const data = await PACKAGES.get(`${package_name}==${version}`, 'stream')
+  if (!data) {
+    return new Response(`package "${package_name}" not found`, { status: 404 })
+  }
+  return new Response(data, {headers: {'package-version': version, 'package-name': package_name}})
 }
 
 async function upload(request, url) {
@@ -51,8 +93,21 @@ async function upload(request, url) {
     return r
   }
   const package_name = url.pathname.substr(1)
-  await PACKAGES.put(package_name, request.body)
-  return new Response(`uploaded package "${package_name}"`)
+  let version = get_version(url)
+  try {
+    const vd = parse_version(version)
+    version = vd.canonical
+  } catch (e) {
+    return new Response(e.toString(), { status: 400 })
+  }
+
+  const key = `${package_name}==${version}`
+  const exists = await PACKAGES.get(key)
+  if (exists) {
+    return new Response(`package "${package_name}" version ${version} already exists\n`, { status: 409 })
+  }
+  await PACKAGES.put(key, request.body, { metadata: { version } })
+  return new Response(`uploading package "${package_name}" version "${version}" complete!\n`)
 }
 
 // utilities
@@ -80,6 +135,54 @@ function get_credentials(request) {
 
 function check_method(request, expected) {
   if (request.method !== expected) {
-    return new Response(`wrong method, expected ${expected}`, {status: 405, headers: {'Allow': expected}})
+    return new Response(`wrong method, expected ${expected}\n`, { status: 405, headers: { Allow: expected } })
   }
+}
+
+function get_version(url) {
+  return url.searchParams.get('version') || url.searchParams.get('v')
+}
+
+const pattern = /^v?(\d+)\.(\d+)(?:\.(\d+)(?:([ab])(\d+))?)?$/i
+const parse_version = version => {
+  if (!version) {
+    throw new Error('version not set, use the "v" get parameter')
+  }
+
+  const match = version.match(pattern)
+  if (!match) {
+    throw new Error(`invalid version "${version}"`)
+  }
+
+  const rv = {
+    major: Number(match[1]),
+    minor: 0,
+    patch: 0,
+  }
+  if (match[2]) {
+    rv.minor = Number(match[2])
+    if (match[3]) {
+      rv.patch = Number(match[3])
+      if (match[4]) {
+        rv.PreReleaseLabel = match[4]
+        rv.PreRelease = Number(match[5])
+      }
+    }
+  }
+  rv.canonical = `v${rv.major}.${rv.minor}.${rv.patch}`
+  rv.magnitude = rv.major * 1e9 + rv.minor * 1e6 + rv.patch * 1e3
+  if (rv.PreReleaseLabel) {
+    rv.canonical += `${rv.PreReleaseLabel}${rv.PreRelease}`
+    rv.magnitude -= rv.PreReleaseLabel === 'a' ? 200 : 100
+    rv.magnitude += rv.PreRelease
+  }
+  return rv
+}
+
+async function get_versions(package_name) {
+  const list = await PACKAGES.list({ prefix: `${package_name}==` })
+  return list.keys
+    .map(v => parse_version(v.metadata.version))
+    .sort((a, b) => b.magnitude - a.magnitude)
+    .map(v => v.canonical)
 }
