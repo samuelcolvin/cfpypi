@@ -76,7 +76,7 @@ async function download(request, url) {
       const vd = parse_version(version)
       version = vd.canonical
     } catch (e) {
-      return new Response(e.toString(), { status: 400 })
+      return new Response( `${e.toString()}\n`, { status: 400 })
     }
   }
 
