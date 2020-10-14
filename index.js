@@ -33,7 +33,7 @@ function handle(request) {
 }
 
 const index_html = `
-<h1>cpypi</h1>
+<h1>cfpypi</h1>
 <p>
   Private python package index using cloudflare workers
 </p>
