@@ -8,7 +8,7 @@ function handle(request) {
   const credentials = get_credentials(request)
   // const credentials = { user: DOWNLOAD_USER, password: DOWNLOAD_PASSWORD }
   if (!credentials) {
-    return new Response('invalid "Authorization" header\n', {
+    return new Response('401: invalid "Authorization" header\n', {
       status: 401,
       headers: { 'WWW-Authenticate': ' Basic realm="Access to the cfpyi site"' },
     })
@@ -17,7 +17,7 @@ function handle(request) {
     if (credentials.password === DOWNLOAD_PASSWORD) {
       return download(request, url)
     }
-    return new Response('password download wrong\n', { status: 403 })
+    return new Response('403: password download wrong\n', { status: 403 })
   } else if (credentials.user === UPLOAD_USER) {
     if (credentials.password === UPLOAD_PASSWORD) {
       if (request.method === 'GET') {
@@ -26,9 +26,9 @@ function handle(request) {
         return upload(request, url)
       }
     }
-    return new Response('password upload wrong\n', { status: 403 })
+    return new Response('403: password upload wrong\n', { status: 403 })
   } else {
-    return new Response('username wrong\n', { status: 403 })
+    return new Response('403: username wrong\n', { status: 403 })
   }
 }
 
@@ -58,33 +58,34 @@ async function download(request, url) {
     return r
   }
 
-  const package_name = url.pathname.substr(1)
+  const package_name = get_package_name(url)
+  const existing_versions = await get_versions(package_name)
+  if (!existing_versions.length) {
+    return new Response(`404: package "${package_name}" not found`, { status: 404 })
+  }
+
   if (url.searchParams.get('list')) {
-    const data = { package: package_name, versions: await get_versions(package_name) }
+    const data = { package: package_name, versions: existing_versions }
     return new Response(JSON.stringify(data, null, 2) + '\n', { headers: { 'content-type': 'application/json' } })
   }
 
   let version = get_version(url)
   if (!version) {
-    const versions = await get_versions(package_name)
-    if (!versions.length) {
-      return new Response(`package "${package_name}" not found`, { status: 404 })
-    }
-    version = versions[0]
+    version = existing_versions[0]
   } else {
     try {
       const vd = parse_version(version)
       version = vd.canonical
     } catch (e) {
-      return new Response( `${e.toString()}\n`, { status: 400 })
+      return new Response(`400: ${e.toString()}\n`, { status: 400 })
     }
   }
 
   const data = await PACKAGES.get(`${package_name}==${version}`, 'stream')
   if (!data) {
-    return new Response(`package "${package_name}" not found`, { status: 404 })
+    return new Response(`404: package "${package_name}" not found`, { status: 404 })
   }
-  return new Response(data, {headers: {'package-version': version, 'package-name': package_name}})
+  return new Response(data, { headers: { 'package-version': version, 'package-name': package_name } })
 }
 
 async function upload(request, url) {
@@ -92,22 +93,22 @@ async function upload(request, url) {
   if (r) {
     return r
   }
-  const package_name = url.pathname.substr(1)
+  const package_name = get_package_name(url)
   let version = get_version(url)
   try {
     const vd = parse_version(version)
     version = vd.canonical
   } catch (e) {
-    return new Response(e.toString(), { status: 400 })
+    return new Response(`400: ${e.toString()}\n`, { status: 400 })
   }
 
   const key = `${package_name}==${version}`
   const exists = await PACKAGES.get(key)
   if (exists) {
-    return new Response(`package "${package_name}" version ${version} already exists\n`, { status: 409 })
+    return new Response(`409: package "${package_name}" version ${version} already exists\n`, { status: 409 })
   }
   await PACKAGES.put(key, request.body, { metadata: { version } })
-  return new Response(`uploading package "${package_name}" version "${version}" complete!\n`)
+  return new Response(`uploading package "${package_name}" version "${version}" complete!\n`, { status: 201 })
 }
 
 // utilities
@@ -135,8 +136,12 @@ function get_credentials(request) {
 
 function check_method(request, expected) {
   if (request.method !== expected) {
-    return new Response(`wrong method, expected ${expected}\n`, { status: 405, headers: { Allow: expected } })
+    return new Response(`405: wrong method, expected ${expected}\n`, { status: 405, headers: { Allow: expected } })
   }
+}
+
+function get_package_name(url) {
+  return url.pathname.substr(1).replace(/\/+$/g, '')
 }
 
 function get_version(url) {
