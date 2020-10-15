@@ -79,22 +79,20 @@ async function download(request, url) {
   if (!package_info.version) {
     const existing_versions = await get_versions(package_name)
     if (!existing_versions.length) {
-      return new Response(`404: package "${package_name}" not found\n`, { status: 404 })
+      return new Response(`404: no versions found for package "${package_name}"\n`, { status: 404 })
     }
     package_info.version = existing_versions[0].version
   }
-
+  const headers = {
+    'package-name': package_name,
+    'package-version': package_info.version,
+    'package-extra': package_info.extra,
+  }
   const data = await PACKAGES.get(package_key(package_info), 'stream')
   if (!data) {
-    return new Response(`404: ${canonical_filename(package_info)} not found\n`, { status: 404 })
+    return new Response(`404: file ${canonical_filename(package_info)} not found\n`, { status: 404, headers })
   }
-  return new Response(data, {
-    headers: {
-      'package-name': package_name,
-      'package-version': package_info.version,
-      'package-extra': package_info.extra,
-    },
-  })
+  return new Response(data, { headers })
 }
 
 async function upload(request, url) {
@@ -152,7 +150,8 @@ function check_method(request, expected) {
 
 const get_filename = url => url.pathname.substr(1).replace(/\/+$/, '')
 
-const tar_pattern = /^([^:-]+)-([^:-]+)(\.tar\.gz)$/i
+// dashes are allowed tar package names but not wheel where they get replaced with underscore
+const tar_pattern = /^([^:]+)-([^:-]+)(\.tar\.gz)$/i
 const wheel_pattern = /^([^:-]+?)-([^:-]+)(-.+?-.+?-.+?\.whl)$/i
 
 function get_package_info(filename, allow_latest = false) {
