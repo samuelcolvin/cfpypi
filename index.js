@@ -58,10 +58,18 @@ async function download(request, url) {
     return r
   }
 
-  const package_name = get_package_name(url)
+  let path_data
+  try {
+    path_data = get_package_version(url)
+  } catch (e) {
+    return new Response(`400: ${e.toString()}\n`, { status: 400 })
+  }
+  const package_name = path_data.package_name
+  let version = path_data.version
+
   const existing_versions = await get_versions(package_name)
   if (!existing_versions.length) {
-    return new Response(`404: package "${package_name}" not found`, { status: 404 })
+    return new Response(`404: package "${package_name}" not found\n`, { status: 404 })
   }
 
   if (url.searchParams.get('list')) {
@@ -69,21 +77,13 @@ async function download(request, url) {
     return new Response(JSON.stringify(data, null, 2) + '\n', { headers: { 'content-type': 'application/json' } })
   }
 
-  let version = get_version(url)
   if (!version) {
     version = existing_versions[0]
-  } else {
-    try {
-      const vd = parse_version(version)
-      version = vd.canonical
-    } catch (e) {
-      return new Response(`400: ${e.toString()}\n`, { status: 400 })
-    }
   }
 
   const data = await PACKAGES.get(`${package_name}==${version}`, 'stream')
   if (!data) {
-    return new Response(`404: package "${package_name}" not found`, { status: 404 })
+    return new Response(`404: version "${version}" of "${package_name}" not found\n`, { status: 404 })
   }
   return new Response(data, { headers: { 'package-version': version, 'package-name': package_name } })
 }
@@ -93,14 +93,13 @@ async function upload(request, url) {
   if (r) {
     return r
   }
-  const package_name = get_package_name(url)
-  let version = get_version(url)
+  let path_data
   try {
-    const vd = parse_version(version)
-    version = vd.canonical
+    path_data = get_package_version(url)
   } catch (e) {
     return new Response(`400: ${e.toString()}\n`, { status: 400 })
   }
+  const { package_name, version } = path_data
 
   const key = `${package_name}==${version}`
   const exists = await PACKAGES.get(key)
@@ -140,20 +139,25 @@ function check_method(request, expected) {
   }
 }
 
-function get_package_name(url) {
-  return url.pathname.substr(1).replace(/\/+$/g, '')
+function get_package_version(url, require_version = false) {
+  const path = url.pathname.substr(1).replace(/\/+$/g, '')
+  const parts = path.split('/')
+  if (parts.length === 2) {
+    return { package_name: clean_path(parts[0]), version: parse_version(parts[1]).canonical }
+  } else if (parts.length === 1) {
+    if (require_version) {
+      throw new Error('version not set, use "<package>/<version>" to supply version')
+    }
+    return { package_name: clean_path(parts[0]), version: null }
+  } else {
+    throw new Error('wrong number of part chunks, should be "<package>" or "<package>/<version>"')
+  }
 }
 
-function get_version(url) {
-  return url.searchParams.get('version') || url.searchParams.get('v')
-}
+const clean_path = p => p.replace('_', '-')
 
 const pattern = /^v?(\d+)\.(\d+)(?:\.(\d+)(?:([ab])(\d+))?)?$/i
 const parse_version = version => {
-  if (!version) {
-    throw new Error('version not set, use the "v" get parameter')
-  }
-
   const match = version.match(pattern)
   if (!match) {
     throw new Error(`invalid version "${version}"`)
