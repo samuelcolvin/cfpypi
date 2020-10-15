@@ -75,13 +75,14 @@ async function download(request, url) {
     return new Response(`400: ${e.toString()}\n`, { status: 400 })
   }
   const package_name = package_info.name
+  const extra = package_info.extra
 
   if (!package_info.version) {
     const existing_versions = await get_versions(package_name)
-    if (!existing_versions.length) {
-      return new Response(`404: no versions found for package "${package_name}"\n`, { status: 404 })
+    package_info.version = existing_versions.filter(v => v.extra === extra).map(v => v.version)[0]
+    if (!package_info.version) {
+      return new Response(`404: no versions found for package "${package_name}-*${extra}"\n`, { status: 404 })
     }
-    package_info.version = existing_versions[0].version
   }
   const headers = {
     'package-name': package_name,
@@ -209,5 +210,11 @@ async function get_versions(package_name) {
   return list.keys
     .map(v => ({ version: parse_version(v.metadata.version), extra: v.metadata.extra }))
     .sort((a, b) => b.version.magnitude - a.version.magnitude)
-    .map(v => ({ version: v.version.canonical, extra: v.extra }))
+    .map(v => {
+      const d = { version: v.version.canonical, extra: v.extra }
+      return {
+        name: canonical_filename({ name: package_name, ...d }),
+        ...d,
+      }
+    })
 }
