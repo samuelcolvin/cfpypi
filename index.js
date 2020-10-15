@@ -17,7 +17,7 @@ function handle(request) {
     if (credentials.password === DOWNLOAD_PASSWORD) {
       return download(request, url)
     }
-    return new Response('403: password download wrong\n', { status: 403 })
+    return new Response('403: password for downloading wrong\n', { status: 403 })
   } else if (credentials.user === UPLOAD_USER) {
     if (credentials.password === UPLOAD_PASSWORD) {
       if (request.method === 'GET') {
@@ -26,7 +26,7 @@ function handle(request) {
         return upload(request, url)
       }
     }
-    return new Response('403: password upload wrong\n', { status: 403 })
+    return new Response('403: password for uploading wrong\n', { status: 403 })
   } else {
     return new Response('403: username wrong\n', { status: 403 })
   }
@@ -107,7 +107,7 @@ async function upload(request, url) {
     return new Response(`409: package "${package_name}" version ${version} already exists\n`, { status: 409 })
   }
   await PACKAGES.put(key, request.body, { metadata: { version } })
-  return new Response(`uploading package "${package_name}" version "${version}" complete!\n`, { status: 201 })
+  return new Response(`uploaded package "${package_name}", version "${version}" successfully!\n`, { status: 201 })
 }
 
 // utilities
